@@ -1,0 +1,15 @@
+ ---
+ # Default packages for common system setup
+ common_packages:
+   - python3-pip
+   - curl
+   - git
+   - vim
+   - htop
+   - ca-certificates
+   - apt-transport-https
+
+ common_timezone: Etc/UTC
+ # User to ensure exists for deployments (optional)
+ common_deploy_user: null
+
