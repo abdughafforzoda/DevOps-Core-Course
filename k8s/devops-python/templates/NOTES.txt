@@ -1,0 +1,25 @@
+1) Get the application URL:
+
+{{- if eq .Values.service.type "NodePort" }}
+  export NODE_PORT={{ .Values.service.nodePort }}
+  echo "NodePort: ${NODE_PORT}"
+
+Minikube:
+  minikube service {{ include "devops-python.fullname" . }} --url
+
+Generic (port-forward):
+  kubectl port-forward service/{{ include "devops-python.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/health
+{{- else }}
+  kubectl get svc {{ include "devops-python.fullname" . }} -o wide
+{{- end }}
+
+2) This chart renders an Argo **Rollout** (Lab 14), not a Deployment. Install the controller: ./k8s/rollouts/install-argo-rollouts.sh
+  kubectl argo rollouts get rollout {{ include "devops-python.fullname" . }} -n {{ .Release.Namespace }} -w
+  kubectl argo rollouts promote {{ include "devops-python.fullname" . }} -n {{ .Release.Namespace }}
+  Blue-green preview Service (if strategy=blueGreen): {{ include "devops-python.fullname" . }}-preview
+
+3) Useful Helm commands:
+  helm get manifest {{ .Release.Name }}
+  helm get values {{ .Release.Name }}
+  helm history {{ .Release.Name }}
