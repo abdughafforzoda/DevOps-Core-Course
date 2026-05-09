@@ -1,0 +1,151 @@
+{{- if eq .Values.workload.kind "rollout" }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "devops-python.fullname" . }}
+  labels:
+    {{- include "devops-python.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "devops-python.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "devops-python.selectorLabels" . | nindent 8 }}
+      {{- if or (and .Values.configMapChecksum.enabled .Values.config.enabled) .Values.vault.injector.enabled }}
+      annotations:
+        {{- if and .Values.configMapChecksum.enabled .Values.config.enabled }}
+        checksum/config-file: {{ .Files.Get "files/config.json" | sha256sum }}
+        checksum/config-env: {{ include "devops-python.configEnvChecksum" . | sha256sum }}
+        {{- end }}
+        {{- if .Values.vault.injector.enabled }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ .Values.vault.role | quote }}
+        {{- if .Values.vault.injector.templateEnabled }}
+        vault.hashicorp.com/agent-inject-template-config: |
+{{ .Files.Get "files/vault-agent-inject.tpl" | nindent 10 }}
+        {{- else }}
+        vault.hashicorp.com/agent-inject-secret-config: {{ .Values.vault.secretPath | quote }}
+        {{- end }}
+        {{- range $k, $v := .Values.vault.injector.extraAnnotations }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "devops-python.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext.pod | nindent 8 }}
+      volumes:
+        {{- if .Values.config.enabled }}
+        - name: app-config
+          configMap:
+            name: {{ include "devops-python.fullname" . }}-file
+        {{- end }}
+        {{- if .Values.persistence.enabled }}
+        - name: visits-data
+          persistentVolumeClaim:
+            claimName: {{ include "devops-python.fullname" . }}-data
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+      containers:
+        - name: {{ include "devops-python.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+              protocol: TCP
+          env:
+            {{- include "devops-python.envVars" . | nindent 12 }}
+          {{- $needEnvFrom := or (and .Values.config.enabled .Values.config.injectEnv) (and .Values.secrets.enabled (or .Values.secrets.create .Values.secrets.existingSecretName)) }}
+          {{- if $needEnvFrom }}
+          envFrom:
+            {{- if and .Values.config.enabled .Values.config.injectEnv }}
+            - configMapRef:
+                name: {{ include "devops-python.fullname" . }}-env
+            {{- end }}
+            {{- if and .Values.secrets.enabled (or .Values.secrets.create .Values.secrets.existingSecretName) }}
+            - secretRef:
+                name: {{ include "devops-python.secretName" . }}
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            {{- if .Values.config.enabled }}
+            - name: app-config
+              mountPath: /config
+              readOnly: true
+            {{- end }}
+            {{- if .Values.persistence.enabled }}
+            - name: visits-data
+              mountPath: /data
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.securityContext.container | nindent 12 }}
+  strategy:
+    {{- if eq .Values.rollout.strategy "blueGreen" }}
+    blueGreen:
+      activeService: {{ include "devops-python.fullname" . }}
+      previewService: {{ include "devops-python.fullname" . }}-preview
+      autoPromotionEnabled: {{ .Values.rollout.blueGreen.autoPromotionEnabled }}
+      scaleDownDelaySeconds: {{ .Values.rollout.blueGreen.scaleDownDelaySeconds }}
+      previewReplicaCount: {{ .Values.rollout.blueGreen.previewReplicaCount }}
+    {{- else }}
+    canary:
+      maxSurge: {{ .Values.rollout.canary.maxSurge | quote }}
+      maxUnavailable: {{ .Values.rollout.canary.maxUnavailable | quote }}
+      steps:
+        - setWeight: 20
+        {{- if .Values.rollout.analysis.enabled }}
+        - analysis:
+            templates:
+              - templateName: {{ include "devops-python.analysisTemplateName" . }}
+        {{- end }}
+        - pause: {}
+        - setWeight: 40
+        - pause: { duration: 30s }
+        - setWeight: 60
+        - pause: { duration: 30s }
+        - setWeight: 80
+        - pause: { duration: 30s }
+        - setWeight: 100
+    {{- end }}
+{{- end }}

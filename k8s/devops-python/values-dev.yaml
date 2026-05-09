@@ -1,0 +1,23 @@
+# Development overrides (Task 3)
+# Lab 14 canary: use at least 2 replicas so setWeight percentages can schedule canary pods
+replicaCount: 2
+
+image:
+  tag: latest
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+service:
+  type: NodePort
+
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
