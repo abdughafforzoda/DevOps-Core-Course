@@ -1,0 +1,33 @@
+1) Get the application URL:
+
+{{- if eq .Values.service.type "NodePort" }}
+  export NODE_PORT={{ .Values.service.nodePort }}
+  echo "NodePort: ${NODE_PORT}"
+
+Minikube:
+  minikube service {{ include "devops-python.fullname" . }} --url
+
+Generic (port-forward):
+  kubectl port-forward service/{{ include "devops-python.fullname" . }} 8080:{{ .Values.service.port }}
+  curl http://localhost:8080/health
+{{- else }}
+  kubectl get svc {{ include "devops-python.fullname" . }} -o wide
+{{- end }}
+
+2) Workload: {{ .Values.workload.kind }} (set workload.kind: statefulSet for Lab 15 — see values-statefulset.yaml + k8s/STATEFULSET.md).
+{{- if eq .Values.workload.kind "rollout" }}
+   Argo Rollouts: ./k8s/rollouts/install-argo-rollouts.sh
+  kubectl argo rollouts get rollout {{ include "devops-python.fullname" . }} -n {{ .Release.Namespace }} -w
+  kubectl argo rollouts promote {{ include "devops-python.fullname" . }} -n {{ .Release.Namespace }}
+  Blue-green preview (if strategy=blueGreen): {{ include "devops-python.fullname" . }}-preview
+{{- else }}
+   Headless Service (per-pod DNS): {{ include "devops-python.fullname" . }}-headless
+  kubectl get pods,pvc -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- end }}
+
+3) Lab 16 — Init file from init container: `/init/{{ .Values.initContainers.download.filename }}` (default `index.html`). Monitoring: `k8s/MONITORING.md`, optional ServiceMonitor: `.Values.serviceMonitor.enabled`
+
+4) Useful Helm commands:
+  helm get manifest {{ .Release.Name }}
+  helm get values {{ .Release.Name }}
+  helm history {{ .Release.Name }}

@@ -1,0 +1,183 @@
+# Default values for devops-python.
+
+replicaCount: 3
+
+# Lab 14 default: Argo Rollout. Lab 15: set workload.kind: statefulSet (see values-statefulset.yaml).
+workload:
+  kind: rollout
+
+# Lab 15 — StatefulSet pod management and update strategy (partition / OnDelete bonus)
+statefulSet:
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+image:
+  repository: jambulancia/devops-info-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  enabled: true
+  type: NodePort
+  port: 80
+  targetPort: 5000
+  nodePort: 30080
+  # Second NodePort for blue-green preview (Lab 14); set in values-bluegreen.yaml
+  previewNodePort: 30081
+
+containerPort: 5000
+
+env:
+  HOST: "0.0.0.0"
+  PORT: "5000"
+  LOG_FORMAT: "json"
+  VISITS_DATA_PATH: "/data/visits"
+
+# Lab 12 — ConfigMaps (file + env)
+config:
+  enabled: true
+  injectEnv: true
+  environment: dev
+  logLevel: INFO
+  featureDebug: false
+
+# Lab 12 — persistence for visit counter (RWO: one node only; use 1 replica or RWX storage for multi-node)
+# If disabled, set env.VISITS_DATA_PATH to a writable path (e.g. /tmp/visits); the container root FS is read-only.
+persistence:
+  enabled: true
+  size: 100Mi
+  storageClass: ""
+
+# Lab 12 bonus — rolling restart when ConfigMap-relevant inputs change
+configMapChecksum:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+securityContext:
+  pod:
+    seccompProfile:
+      type: RuntimeDefault
+  container:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+probes:
+  startup:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 20
+  readiness:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+
+# Lab 14 — Argo Rollouts (replaces apps/v1 Deployment; install controller: see k8s/rollouts/)
+# strategy: canary (default) or blueGreen — set rollout.strategy (see values-bluegreen.yaml)
+rollout:
+  strategy: canary
+  canary:
+    maxSurge: "25%"
+    maxUnavailable: 0
+  blueGreen:
+    autoPromotionEnabled: false
+    scaleDownDelaySeconds: 30
+    previewReplicaCount: 1
+  analysis:
+    enabled: false
+    healthPath: /health
+
+# Lab 16 — init containers (kube-prometheus doc: k8s/MONITORING.md)
+initContainers:
+  enabled: true
+  download:
+    enabled: true
+    image: busybox:1.36
+    url: "http://example.com"
+    filename: "index.html"
+  waitForService:
+    enabled: true
+    image: busybox:1.36
+    # Resolves in every cluster — Lab 16 “wait until dependency exists” pattern
+    host: "kubernetes.default.svc.cluster.local"
+
+# Lab 16 bonus — Prometheus Operator ServiceMonitor (install kube-prometheus-stack first)
+serviceMonitor:
+  enabled: false
+  # Must match kube-prometheus-stack Helm release name (labels Prometheus resource)
+  releaseLabel: monitoring
+  interval: 30s
+  scrapeTimeout: 10s
+
+# Service account (required for Vault Kubernetes auth — Lab 11)
+serviceAccount:
+  create: true
+  name: ""
+
+# Helm-managed Secret — use placeholders; override at install with --set-file or -f
+secrets:
+  enabled: true
+  create: true
+  existingSecretName: ""
+  stringData:
+    username: "changeme-user"
+    password: "changeme-pass"
+
+# HashiCorp Vault Agent Injector (Lab 11 Task 3)
+# Install Vault: see k8s/SECRETS.md — enable after Vault + auth + role exist.
+vault:
+  role: devops-python
+  secretPath: secret/data/myapp/config
+  injector:
+    enabled: false
+    templateEnabled: false
+    extraAnnotations: {}
+
+hooks:
+  enabled: true
+  preInstall:
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - "echo pre-install: basic validation && sleep 2 && echo pre-install: ok"
+    weight: -5
+  postInstall:
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - "echo post-install: smoke test placeholder && sleep 2 && echo post-install: ok"
+    weight: 5
+
